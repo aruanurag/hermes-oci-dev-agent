@@ -1,0 +1,119 @@
+#cloud-config
+package_update: false
+packages:
+  - git
+  - curl
+  - python3
+  - python3-pip
+
+users:
+  # Preserve Oracle Linux's default `opc` account so cloud-init can attach the
+  # Compute launch key before the longer package/install phase starts.
+  - default
+  - name: hermes
+    shell: /bin/bash
+    lock_passwd: true
+
+write_files:
+  - path: /opt/hermes/oci-genai-proxy/server.py
+    permissions: "0555"
+    encoding: b64
+    content: ${proxy_server}
+  - path: /opt/hermes/oci-genai-proxy/verify.py
+    permissions: "0555"
+    encoding: b64
+    content: ${proxy_verify}
+  - path: /home/hermes/.hermes/config.yaml
+    permissions: "0600"
+    encoding: b64
+    content: ${hermes_config}
+  - path: /etc/hermes-genai.env
+    permissions: "0600"
+    content: |
+      OCI_GENAI_REGION=${region}
+      OCI_GENAI_PROJECT_OCID=${genai_project_ocid}
+      OCI_GENAI_COMPARTMENT_OCID=${compartment_ocid}
+      OCI_GENAI_MODEL_ID=${genai_model_id}
+  - path: /etc/systemd/system/hermes-genai-proxy.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=OCI IAM signing proxy for Hermes
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      User=hermes
+      Group=hermes
+      EnvironmentFile=/etc/hermes-genai.env
+      ExecStart=/opt/hermes/genai-proxy-venv/bin/python /opt/hermes/oci-genai-proxy/server.py
+      Restart=on-failure
+      RestartSec=5
+      NoNewPrivileges=true
+      PrivateTmp=true
+
+      [Install]
+      WantedBy=multi-user.target
+  - path: /etc/systemd/system/hermes-gateway.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Hermes Agent gateway
+      Requires=hermes-genai-proxy.service
+      After=hermes-genai-proxy.service
+
+      [Service]
+      User=hermes
+      Group=hermes
+      Environment=HERMES_HOME=/home/hermes/.hermes
+      Environment=HERMES_DASHBOARD_TUI=1
+      WorkingDirectory=/home/hermes/workspace
+      ExecStart=/usr/bin/bash -lc 'exec /home/hermes/.hermes/hermes-agent/venv/bin/hermes gateway run'
+      Restart=on-failure
+      RestartSec=5
+      NoNewPrivileges=true
+      PrivateTmp=true
+
+      [Install]
+      WantedBy=multi-user.target
+  - path: /etc/systemd/system/hermes-dashboard.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Hermes Dashboard (loopback-only; access through Bastion SSH)
+      Requires=hermes-genai-proxy.service
+      After=hermes-genai-proxy.service
+
+      [Service]
+      User=hermes
+      Group=hermes
+      Environment=HERMES_HOME=/home/hermes/.hermes
+      WorkingDirectory=/home/hermes/workspace
+      # Leave the Dashboard on loopback. Hermes intentionally refuses a
+      # non-loopback bind without an OAuth provider, and the Bastion SSH
+      # tunnel below is the private access boundary.
+      ExecStart=/usr/bin/bash -lc 'exec /home/hermes/.hermes/hermes-agent/venv/bin/hermes dashboard --no-open'
+      Restart=on-failure
+      RestartSec=5
+      NoNewPrivileges=true
+      PrivateTmp=true
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  # Keep the launch key explicit as well as in OCI metadata. This ensures the
+  # default Oracle Linux user remains reachable after cloud-init user setup.
+  - [mkdir, -p, /home/opc/.ssh]
+  - [chown, opc:opc, /home/opc/.ssh]
+  - [chmod, "0700", /home/opc/.ssh]
+  - [sh, -c, "echo '${ssh_public_key}' >> /home/opc/.ssh/authorized_keys"]
+  - [chown, opc:opc, /home/opc/.ssh/authorized_keys]
+  - [chmod, "0600", /home/opc/.ssh/authorized_keys]
+  - [mkdir, -p, /opt/hermes/oci-genai-proxy, /home/hermes/.hermes, /home/hermes/workspace]
+  - [chown, -R, hermes:hermes, /home/hermes]
+  - [python3, -m, venv, /opt/hermes/genai-proxy-venv]
+  - [/opt/hermes/genai-proxy-venv/bin/pip, install, --no-cache-dir, oci-genai-auth, httpx, flask]
+  - [runuser, -l, hermes, -c, "export HERMES_HOME=/home/hermes/.hermes; curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --non-interactive --skip-setup --skip-browser"]
+  - [systemctl, daemon-reload]
+  - [systemctl, enable, --now, hermes-genai-proxy, hermes-gateway, hermes-dashboard]

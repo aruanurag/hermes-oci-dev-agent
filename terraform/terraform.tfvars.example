@@ -1,0 +1,13 @@
+# REQUIRED: OCI identity and placement
+tenancy_ocid         = "ocid1.tenancy.oc1..REPLACE"
+compartment_ocid     = "ocid1.compartment.oc1..REPLACE"
+region               = "us-chicago-1"
+home_region          = "us-ashburn-1"
+availability_domain  = "REPLACE_WITH_AD_NAME"
+compute_image_ocid   = "ocid1.image.oc1.us-chicago-1.REPLACE"
+ssh_public_key       = "ssh-ed25519 AAAA... your-mac"
+bastion_client_cidr  = "203.0.113.10/32"
+
+# REQUIRED: OCI Generative AI
+genai_project_ocid = "ocid1.generativeaiproject.oc1.us-chicago-1.REPLACE"
+genai_model_id     = "REPLACE_WITH_ENABLED_TOOL_CALLING_MODEL"

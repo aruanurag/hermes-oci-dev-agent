@@ -1,0 +1,25 @@
+# Terraform state and workstation-specific deployment inputs
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/terraform.tfvars
+terraform/*.tfvars.json
+terraform/crash.log
+terraform/crash.*.log
+
+# Credentials, environment files, and local SSH material
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.kubeconfig
+
+# Local artifacts
+.DS_Store
+*.log
+__pycache__/
+*.py[cod]
