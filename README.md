@@ -38,53 +38,143 @@ The editable source is [docs/hermes-oci-architecture.excalidraw](docs/hermes-oci
 - An OCI compartment, region, availability domain, Oracle Linux image OCID, SSH public
   key, and OCI Generative AI project OCID.
 
-## Quick start
+## Prepare local values and SSH
 
-First, create your local deployment values. This file is intentionally ignored by
-Git and must never be committed.
+Choose an existing SSH key or create a dedicated ED25519 key. Keep the private key
+on your Mac; Terraform needs only the contents of the `.pub` file.
+
+```sh
+ssh-keygen -t ed25519 -f "$HOME/.ssh/hermes_oci" -C "hermes-oci"
+cat "$HOME/.ssh/hermes_oci.pub"
+```
+
+Create the local variable file, paste that public-key line into `ssh_public_key`, and
+fill every remaining `REQUIRED` value. This file is ignored by Git and must never be
+committed.
 
 ```sh
 cp terraform/terraform.tfvars.example terraform/terraform.tfvars
-# Edit terraform/terraform.tfvars and fill every REQUIRED value.
+# Edit terraform/terraform.tfvars.
 ```
 
-Then run either target from the repository root:
+## Option 1: Makefile workflow
+
+This is the normal, one-command path. From the repository root:
 
 ```sh
-make provision  # Create/update the Terraform-managed OCI stack.
-make dashboard  # Open http://localhost:9119; Ctrl-C closes the tunnel and session.
-
-# Or perform both steps in one command:
-make up
+make up SSH_PRIVATE_KEY="$HOME/.ssh/hermes_oci"
 ```
 
-`make dashboard` creates a three-hour Bastion port-forwarding session, opens both
-SSH hops, and revokes the session when you press Ctrl-C. It obtains the region,
-Bastion ID, instance ID, and private IP from Terraform outputs—nothing needs to be
-copied manually. The default SSH key is `~/.ssh/id_rsa`; override it when needed:
+It provisions the Terraform-managed OCI stack, creates a time-limited Bastion
+session, opens both SSH hops, waits for a real Dashboard HTTP 200 response, and then
+prints the local URL. Press Ctrl-C to close the tunnels and revoke the Bastion session.
+
+Use the individual targets when the stack already exists or you want to review the
+infrastructure first:
 
 ```sh
-make dashboard SSH_PRIVATE_KEY="$HOME/.ssh/id_ed25519"
-make dashboard LOCAL_DASHBOARD_PORT=9919
+make plan
+make provision
+make dashboard SSH_PRIVATE_KEY="$HOME/.ssh/hermes_oci"
+make destroy
 ```
 
-The SSH private key must be the counterpart of `ssh_public_key` in
-`terraform.tfvars`. If the Dashboard port is already in use, select another local
-port as shown above and browse to that port instead.
-
-The initial Terraform example uses an RSA VM key. The tunnel script enables the
-legacy `ssh-rsa` signature algorithm only for the OCI Bastion hop because some
-Bastion endpoints still require it for RSA session keys. For a new deployment,
-prefer an ED25519 SSH key to avoid that compatibility setting.
-
-Cloud-init creates the dedicated non-root `hermes` user, runs the official installer,
-configures the OCI signing proxy, and starts the services. First boot can take several
-minutes. For maintenance, use `make dashboard`, then in another terminal run:
+The default key is `~/.ssh/id_rsa`; override `SSH_PRIVATE_KEY` whenever the key in
+`terraform.tfvars` has a different name. If port `9119` is in use, choose another
+local port and browse to it instead:
 
 ```sh
-ssh -i ~/.ssh/id_rsa -o IdentitiesOnly=yes -p 2222 opc@127.0.0.1 \
+make dashboard SSH_PRIVATE_KEY="$HOME/.ssh/hermes_oci" LOCAL_DASHBOARD_PORT=9919
+```
+
+## Option 2: Manual Terraform and SSH workflow
+
+Use this path when you want to see or troubleshoot every step. It creates exactly the
+same private deployment and Dashboard tunnel as the Makefile.
+
+### 1. Provision the infrastructure
+
+```sh
+terraform -chdir=terraform init -input=false
+terraform -chdir=terraform plan
+terraform -chdir=terraform apply
+```
+
+Cloud-init creates the dedicated non-root `hermes` user, installs Hermes, configures
+the OCI instance-principal signing proxy, and starts the services. First boot can take
+several minutes.
+
+### 2. Create a Bastion session
+
+```sh
+export SSH_PRIVATE_KEY="$HOME/.ssh/hermes_oci"
+export SSH_PUBLIC_KEY="${SSH_PRIVATE_KEY}.pub"
+export OCI_REGION="$(terraform -chdir=terraform output -raw region)"
+export BASTION_ID="$(terraform -chdir=terraform output -raw bastion_id)"
+export INSTANCE_ID="$(terraform -chdir=terraform output -raw instance_id)"
+export PRIVATE_IP="$(terraform -chdir=terraform output -raw private_ip)"
+
+export SESSION_ID="$(
+  oci bastion session create-port-forwarding \
+    --region "$OCI_REGION" \
+    --bastion-id "$BASTION_ID" \
+    --target-resource-id "$INSTANCE_ID" \
+    --target-private-ip "$PRIVATE_IP" \
+    --target-port 22 \
+    --key-type PUB \
+    --ssh-public-key-file "$SSH_PUBLIC_KEY" \
+    --session-ttl 10800 \
+    --wait-for-state SUCCEEDED \
+    --query 'data.resources[0].identifier' \
+    --raw-output
+)"
+```
+
+`SESSION_ID` must start with `ocid1.bastionsession`. Do not use the work-request OCID
+as an SSH username.
+
+### 3. Open the two SSH tunnels
+
+In **Terminal 1**, forward a local maintenance port to private SSH through Bastion:
+
+```sh
+ssh -i "$SSH_PRIVATE_KEY" -o IdentitiesOnly=yes \
+  -o PubkeyAcceptedAlgorithms=+ssh-rsa \
+  -o ExitOnForwardFailure=yes -N \
+  -L 2222:"$PRIVATE_IP":22 \
+  -p 22 \
+  "$SESSION_ID@host.bastion.$OCI_REGION.oci.oraclecloud.com"
+```
+
+In **Terminal 2**, forward the loopback-only Hermes Dashboard through that SSH hop:
+
+```sh
+ssh -i "$SSH_PRIVATE_KEY" -o IdentitiesOnly=yes -o ExitOnForwardFailure=yes -N \
+  -L 9119:127.0.0.1:9119 \
+  -p 2222 opc@127.0.0.1
+```
+
+Open <http://localhost:9119>. If the VM has just started, wait for cloud-init to
+finish; `channel open failed: connect failed` is transient until the Dashboard service
+is listening.
+
+For maintenance while the first tunnel is open:
+
+```sh
+ssh -i "$SSH_PRIVATE_KEY" -o IdentitiesOnly=yes -p 2222 opc@127.0.0.1 \
   'sudo journalctl -u cloud-final -f'
 ```
+
+When finished, close both SSH terminals and revoke the session:
+
+```sh
+oci bastion session delete --region "$OCI_REGION" --session-id "$SESSION_ID" \
+  --force --wait-for-state SUCCEEDED
+```
+
+The Makefile enables the legacy `ssh-rsa` signature algorithm only for the OCI
+Bastion hop because some Bastion endpoints still require it for RSA session keys.
+Using the ED25519 key above avoids that compatibility setting.
 
 Use the Dashboard's **Chat** view for a live developer-agent conversation. The
 **Sessions** view is for reviewing saved sessions and their workspace activity.
