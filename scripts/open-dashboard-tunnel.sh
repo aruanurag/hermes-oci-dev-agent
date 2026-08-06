@@ -24,7 +24,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-for command in terraform oci ssh lsof mktemp; do
+for command in terraform oci ssh curl lsof mktemp; do
   command -v "$command" >/dev/null || { echo "Required command not found: $command" >&2; exit 1; }
 done
 
@@ -49,16 +49,22 @@ control_socket="$temporary_directory/bastion-control"
 bastion_known_hosts="$temporary_directory/bastion-known-hosts"
 vm_known_hosts="$temporary_directory/vm-known-hosts"
 bastion_ssh_log="$temporary_directory/bastion-ssh.log"
+dashboard_ssh_log="$temporary_directory/dashboard-ssh.log"
 session_id=""
+dashboard_ssh_pid=""
 
 cleanup() {
   local status=$?
   trap - EXIT INT TERM
+  if [[ -n "$dashboard_ssh_pid" ]]; then
+    kill "$dashboard_ssh_pid" >/dev/null 2>&1 || true
+    wait "$dashboard_ssh_pid" >/dev/null 2>&1 || true
+  fi
   if [[ -n "$session_id" ]]; then
     ssh -S "$control_socket" -O exit -p 22 "$session_id@host.bastion.$region.oci.oraclecloud.com" >/dev/null 2>&1 || true
     oci bastion session delete --region "$region" --session-id "$session_id" --force --wait-for-state SUCCEEDED >/dev/null 2>&1 || true
   fi
-  rm -f "$session_file" "$control_socket" "$bastion_known_hosts" "$vm_known_hosts" "$bastion_ssh_log"
+  rm -f "$session_file" "$control_socket" "$bastion_known_hosts" "$vm_known_hosts" "$bastion_ssh_log" "$dashboard_ssh_log"
   rmdir "$temporary_directory" 2>/dev/null || true
   exit "$status"
 }
@@ -115,15 +121,38 @@ if [[ "$bastion_connected" != true ]]; then
   exit 1
 fi
 
-echo "Dashboard tunnel ready: http://localhost:$local_dashboard_port"
-echo "Press Ctrl-C to close both SSH tunnels and revoke the Bastion session."
-
 ssh -i "$ssh_private_key" \
   -o IdentitiesOnly=yes \
   -o StrictHostKeyChecking=accept-new \
   -o UserKnownHostsFile="$vm_known_hosts" \
   -o ExitOnForwardFailure=yes \
+  -o LogLevel=ERROR \
   -N \
   -L "$local_dashboard_port:127.0.0.1:9119" \
   -p "$local_ssh_port" \
-  opc@127.0.0.1
+  opc@127.0.0.1 2>"$dashboard_ssh_log" &
+dashboard_ssh_pid=$!
+
+echo "Waiting for Hermes Dashboard to become available..."
+dashboard_ready=false
+for attempt in {1..150}; do
+  dashboard_status="$(curl -s --max-time 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$local_dashboard_port/" || true)"
+  if [[ "$dashboard_status" == "200" ]]; then
+    dashboard_ready=true
+    break
+  fi
+  if ! kill -0 "$dashboard_ssh_pid" >/dev/null 2>&1; then
+    wait "$dashboard_ssh_pid" || true
+    cat "$dashboard_ssh_log" >&2
+    exit 1
+  fi
+  sleep 2
+done
+if [[ "$dashboard_ready" != true ]]; then
+  echo "Timed out waiting for Hermes Dashboard on port $local_dashboard_port." >&2
+  exit 1
+fi
+
+echo "Dashboard ready: http://localhost:$local_dashboard_port"
+echo "Press Ctrl-C to close both SSH tunnels and revoke the Bastion session."
+wait "$dashboard_ssh_pid"
