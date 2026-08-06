@@ -35,6 +35,10 @@ The editable source is [docs/hermes-oci-architecture.excalidraw](docs/hermes-oci
 ## Prerequisites
 
 - Terraform >= 1.7 and authenticated OCI CLI credentials on your Mac.
+- An OCI region where Generative AI is available for your tenancy. Before deploying,
+  create a Generative AI project in that same region and confirm it offers an
+  on-demand model compatible with this deployment. Chicago (`us-chicago-1`) is the
+  documented example; this will not work in every OCI region.
 - An OCI compartment, region, availability domain, Oracle Linux image OCID, SSH public
   key, and OCI Generative AI project OCID.
 
