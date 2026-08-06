@@ -301,6 +301,63 @@ exact ID in `genai_model_id`. The current tested default is `openai.gpt-oss-120b
 The included verification script validates the selected model with a streaming tool-call
 request before Hermes is considered ready.
 
+## Alternative: direct OpenAI or Anthropic API
+
+The Terraform deployment currently implements the OCI GenAI path above. It does not
+accept an OpenAI or Anthropic API key today. A direct-provider variant would preserve
+the private Compute instance and Dashboard tunnel, but change the model path to:
+
+```text
+Hermes → private-subnet NAT Gateway → OpenAI or Anthropic API
+```
+
+The local OCI signing proxy would no longer be used. Configure Hermes with its native
+provider name and an exact model ID available to your account; do not keep the OCI
+`custom` provider, `base_url`, or `api_key: "not-used"` settings.
+
+```yaml
+# Direct OpenAI
+model:
+  provider: openai
+  default: "YOUR_OPENAI_MODEL_ID"
+```
+
+```yaml
+# Direct Anthropic
+model:
+  provider: anthropic
+  default: "YOUR_ANTHROPIC_MODEL_ID"
+```
+
+Hermes reads native provider credentials from its environment rather than from the
+normal configuration file:
+
+```text
+OPENAI_API_KEY=...       # OpenAI
+ANTHROPIC_API_KEY=...    # Anthropic
+```
+
+See the upstream [Hermes configuration guide](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/configuration.md)
+for the current provider and credential behavior.
+
+### Keep direct-provider keys out of Terraform
+
+Never place either API key in `terraform.tfvars`, Terraform variables, cloud-init,
+Git, or `/home/hermes/.hermes/config.yaml`: Terraform state and instance metadata can
+otherwise retain it. Store the key in OCI Vault instead, pass only the secret OCID to
+Terraform, and let the VM retrieve it at startup using its instance principal. The
+retrieved value should be written to a root-owned `0600` systemd `EnvironmentFile`
+that is supplied to `hermes-gateway`.
+
+Grant the deployment's exact Compute dynamic group permission to read the required
+secret bundle only. Keep the existing OCI GenAI dynamic-group policy only when OCI
+GenAI remains in use. Direct OpenAI or Anthropic calls leave through the existing NAT
+Gateway; no public IP or inbound Dashboard rule is needed.
+
+This is a security tradeoff: the current OCI path uses short-lived instance credentials
+and stores no reusable model key on the VM. A direct provider needs a reusable API key,
+even when it is injected securely from Vault.
+
 ## Suggested developer-agent workflow
 
 1. Give Hermes a bounded task, including the repository path and acceptance criteria.
