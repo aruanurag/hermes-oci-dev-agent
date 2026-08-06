@@ -8,6 +8,7 @@ compute_image_ocid   = "ocid1.image.oc1.us-chicago-1.REPLACE"
 ssh_public_key       = "ssh-ed25519 AAAA... your-mac"
 bastion_client_cidr  = "203.0.113.10/32"
 
-# REQUIRED: OCI Generative AI
+# REQUIRED: OCI Generative AI. Create the project in the same region as Compute.
 genai_project_ocid = "ocid1.generativeaiproject.oc1.us-chicago-1.REPLACE"
-genai_model_id     = "REPLACE_WITH_ENABLED_TOOL_CALLING_MODEL"
+# Tested in Chicago with streaming tool calls. See README before changing it.
+genai_model_id     = "openai.gpt-oss-120b"

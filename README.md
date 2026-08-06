@@ -38,6 +38,64 @@ The editable source is [docs/hermes-oci-architecture.excalidraw](docs/hermes-oci
 - An OCI compartment, region, availability domain, Oracle Linux image OCID, SSH public
   key, and OCI Generative AI project OCID.
 
+## Choose Compute image, GenAI project, and model
+
+Choose these values before filling `terraform.tfvars`; they are regional and cannot
+be safely guessed from another OCI region.
+
+### Compute image
+
+This deployment uses `VM.Standard.E5.Flex`. List current compatible Oracle Linux 9
+platform images in your target region, then copy the newest `id` into
+`compute_image_ocid`:
+
+```sh
+export OCI_REGION='us-chicago-1'
+export TENANCY_OCID='ocid1.tenancy.oc1..REPLACE'
+
+oci compute image list \
+  --region "$OCI_REGION" \
+  --compartment-id "$TENANCY_OCID" \
+  --operating-system 'Oracle Linux' \
+  --operating-system-version '9' \
+  --shape 'VM.Standard.E5.Flex' \
+  --all \
+  --sort-by TIMECREATED \
+  --sort-order DESC \
+  --query 'data[?"lifecycle-state"==`AVAILABLE`].{name:"display-name",id:id,created:"time-created"}' \
+  --output table
+```
+
+OCI refreshes platform-image listings regularly, so do not copy an image OCID from a
+blog post or another region. See OCI's [image-list command reference](https://docs.oracle.com/en-us/iaas/tools/oci-cli/latest/oci_cli_docs/cmdref/compute/image/list.html).
+
+### OCI Generative AI project
+
+Create the project in the same region as the Compute instance and copy its OCID into
+`genai_project_ocid`. OCI requires a project for its OpenAI-compatible API, and the
+project is the boundary for conversations and response data. Use the OCI Console:
+**Generative AI → Projects → Create project**, then copy the project OCID from its
+details page. See [OCI project creation](https://docs.oracle.com/en-us/iaas/Content/generative-ai/create-project.htm).
+
+For this deployment, a Chicago (`us-chicago-1`) project is the right choice when the
+instance also runs in Chicago.
+
+### Model selection
+
+Start with the tested on-demand model alias below. It passed OCI Chat Completions
+streaming and function/tool-calling validation in Chicago:
+
+```hcl
+genai_model_id = "openai.gpt-oss-120b"
+```
+
+Do not choose a model only because it appears in the Console. Hermes needs a model
+that is enabled in the selected region and works with OCI's OpenAI-compatible Chat
+Completions streaming and tool-calling flow. Some Gemini models and configurations
+may be available in OCI but not work with this Hermes request path. Validate a
+different model before adopting it, and consult OCI's [model and region availability
+table](https://docs.oracle.com/en-us/iaas/Content/generative-ai/model-endpoint-regions.htm).
+
 ## Prepare local values and SSH
 
 Choose an existing SSH key or create a dedicated ED25519 key. Keep the private key
