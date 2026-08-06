@@ -1,0 +1,13 @@
+# Optional local-only override. Copy to profile_override.tf, replace HERMES,
+# and keep the same OCI_PROFILE value when running Make targets so the OCI CLI
+# and Terraform use the same identity.
+provider "oci" {
+  region              = var.region
+  config_file_profile = "HERMES"
+}
+
+provider "oci" {
+  alias               = "home"
+  region              = var.home_region
+  config_file_profile = "HERMES"
+}

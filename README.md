@@ -38,6 +38,47 @@ The editable source is [docs/hermes-oci-architecture.excalidraw](docs/hermes-oci
 - An OCI compartment, region, availability domain, Oracle Linux image OCID, SSH public
   key, and OCI Generative AI project OCID.
 
+## Select the OCI profile explicitly
+
+Do not rely on whichever profile your shell happens to select. This project uses an
+explicit `OCI_PROFILE` value: Make passes it to Terraform's OCI provider and every
+OCI CLI call used to create or close the Bastion session. It defaults to `DEFAULT`
+only when you do not specify it.
+
+List the profiles configured on your Mac, then choose one deliberately:
+
+```sh
+awk -F'[][]' '/^\[.*\]$/{print $2}' "$HOME/.oci/config"
+
+export OCI_PROFILE='HERMES'
+make plan OCI_PROFILE="$OCI_PROFILE"
+make up OCI_PROFILE="$OCI_PROFILE" SSH_PRIVATE_KEY="$HOME/.ssh/hermes_oci"
+```
+
+Use `OCI_PROFILE=DEFAULT` only when `[DEFAULT]` is the intended tenancy and user.
+`OCI_CLI_PROFILE` alone is not enough: it affects OCI CLI commands but does not
+guarantee Terraform selects the same provider identity.
+
+### Optional provider override file
+
+If you prefer to configure Terraform's profile in HCL, create the local Terraform
+override file below and replace `HERMES` with the chosen profile name. Its
+`_override.tf` filename deliberately merges these provider settings with the tracked
+provider definitions:
+
+```sh
+cp terraform/profile_override.tf.example terraform/profile_override.tf
+# Edit terraform/profile_override.tf.
+```
+
+The override configures both the deployment-region provider and the home-region IAM
+provider. It is ignored by Git. Still pass the same profile to Make so the Terraform
+provider and OCI CLI Bastion commands cannot use different identities:
+
+```sh
+make up OCI_PROFILE=HERMES SSH_PRIVATE_KEY="$HOME/.ssh/hermes_oci"
+```
+
 ## Choose Compute image, GenAI project, and model
 
 Choose these values before filling `terraform.tfvars`; they are regional and cannot
@@ -54,6 +95,7 @@ export OCI_REGION='us-chicago-1'
 export TENANCY_OCID='ocid1.tenancy.oc1..REPLACE'
 
 oci compute image list \
+  --profile "$OCI_PROFILE" \
   --region "$OCI_REGION" \
   --compartment-id "$TENANCY_OCID" \
   --operating-system 'Oracle Linux' \
@@ -120,7 +162,7 @@ cp terraform/terraform.tfvars.example terraform/terraform.tfvars
 This is the normal, one-command path. From the repository root:
 
 ```sh
-make up SSH_PRIVATE_KEY="$HOME/.ssh/hermes_oci"
+make up OCI_PROFILE="$OCI_PROFILE" SSH_PRIVATE_KEY="$HOME/.ssh/hermes_oci"
 ```
 
 It provisions the Terraform-managed OCI stack, creates a time-limited Bastion
@@ -131,10 +173,10 @@ Use the individual targets when the stack already exists or you want to review t
 infrastructure first:
 
 ```sh
-make plan
-make provision
-make dashboard SSH_PRIVATE_KEY="$HOME/.ssh/hermes_oci"
-make destroy
+make plan OCI_PROFILE="$OCI_PROFILE"
+make provision OCI_PROFILE="$OCI_PROFILE"
+make dashboard OCI_PROFILE="$OCI_PROFILE" SSH_PRIVATE_KEY="$HOME/.ssh/hermes_oci"
+make destroy OCI_PROFILE="$OCI_PROFILE"
 ```
 
 The default key is `~/.ssh/id_rsa`; override `SSH_PRIVATE_KEY` whenever the key in
@@ -142,7 +184,7 @@ The default key is `~/.ssh/id_rsa`; override `SSH_PRIVATE_KEY` whenever the key 
 local port and browse to it instead:
 
 ```sh
-make dashboard SSH_PRIVATE_KEY="$HOME/.ssh/hermes_oci" LOCAL_DASHBOARD_PORT=9919
+make dashboard OCI_PROFILE="$OCI_PROFILE" SSH_PRIVATE_KEY="$HOME/.ssh/hermes_oci" LOCAL_DASHBOARD_PORT=9919
 ```
 
 ## Option 2: Manual Terraform and SSH workflow
@@ -153,6 +195,7 @@ same private deployment and Dashboard tunnel as the Makefile.
 ### 1. Provision the infrastructure
 
 ```sh
+export TF_VAR_oci_config_file_profile="$OCI_PROFILE"
 terraform -chdir=terraform init -input=false
 terraform -chdir=terraform plan
 terraform -chdir=terraform apply
@@ -173,7 +216,7 @@ export INSTANCE_ID="$(terraform -chdir=terraform output -raw instance_id)"
 export PRIVATE_IP="$(terraform -chdir=terraform output -raw private_ip)"
 
 export SESSION_ID="$(
-  oci bastion session create-port-forwarding \
+  oci --profile "$OCI_PROFILE" bastion session create-port-forwarding \
     --region "$OCI_REGION" \
     --bastion-id "$BASTION_ID" \
     --target-resource-id "$INSTANCE_ID" \
@@ -226,7 +269,7 @@ ssh -i "$SSH_PRIVATE_KEY" -o IdentitiesOnly=yes -p 2222 opc@127.0.0.1 \
 When finished, close both SSH terminals and revoke the session:
 
 ```sh
-oci bastion session delete --region "$OCI_REGION" --session-id "$SESSION_ID" \
+oci --profile "$OCI_PROFILE" bastion session delete --region "$OCI_REGION" --session-id "$SESSION_ID" \
   --force --wait-for-state SUCCEEDED
 ```
 

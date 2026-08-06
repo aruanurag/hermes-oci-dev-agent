@@ -1,6 +1,7 @@
 SHELL := /bin/bash
 
 TF_DIR ?= terraform
+OCI_PROFILE ?= DEFAULT
 SSH_PRIVATE_KEY ?= $(HOME)/.ssh/id_rsa
 LOCAL_SSH_PORT ?= 2222
 LOCAL_DASHBOARD_PORT ?= 9119
@@ -17,7 +18,7 @@ help:
 	@echo "  make up         Provision, then open the Dashboard tunnel."
 	@echo "  make destroy    Destroy the Terraform-managed OCI stack."
 	@echo
-	@echo "Optional overrides: SSH_PRIVATE_KEY=\$$HOME/.ssh/id_ed25519 LOCAL_DASHBOARD_PORT=9919"
+	@echo "Optional overrides: OCI_PROFILE=HERMES SSH_PRIVATE_KEY=\$$HOME/.ssh/id_ed25519 LOCAL_DASHBOARD_PORT=9919"
 
 check-tfvars:
 	@test -f "$(TF_DIR)/terraform.tfvars" || { \
@@ -31,15 +32,16 @@ check-ssh-key:
 
 plan: check-tfvars
 	terraform -chdir="$(TF_DIR)" init -input=false
-	terraform -chdir="$(TF_DIR)" plan
+	terraform -chdir="$(TF_DIR)" plan -var="oci_config_file_profile=$(OCI_PROFILE)"
 
 provision: check-tfvars
 	terraform -chdir="$(TF_DIR)" init -input=false
-	terraform -chdir="$(TF_DIR)" apply
+	terraform -chdir="$(TF_DIR)" apply -var="oci_config_file_profile=$(OCI_PROFILE)"
 
 dashboard: check-tfvars check-ssh-key
 	./scripts/open-dashboard-tunnel.sh \
 		--terraform-dir "$(TF_DIR)" \
+		--oci-profile "$(OCI_PROFILE)" \
 		--ssh-private-key "$(SSH_PRIVATE_KEY)" \
 		--local-ssh-port "$(LOCAL_SSH_PORT)" \
 		--local-dashboard-port "$(LOCAL_DASHBOARD_PORT)" \
@@ -48,10 +50,11 @@ dashboard: check-tfvars check-ssh-key
 up: provision
 	@$(MAKE) dashboard \
 		TF_DIR="$(TF_DIR)" \
+		OCI_PROFILE="$(OCI_PROFILE)" \
 		SSH_PRIVATE_KEY="$(SSH_PRIVATE_KEY)" \
 		LOCAL_SSH_PORT="$(LOCAL_SSH_PORT)" \
 		LOCAL_DASHBOARD_PORT="$(LOCAL_DASHBOARD_PORT)" \
 		BASTION_SESSION_TTL="$(BASTION_SESSION_TTL)"
 
 destroy: check-tfvars
-	terraform -chdir="$(TF_DIR)" destroy
+	terraform -chdir="$(TF_DIR)" destroy -var="oci_config_file_profile=$(OCI_PROFILE)"

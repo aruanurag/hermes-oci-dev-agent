@@ -1,6 +1,11 @@
 variable "tenancy_ocid" { type = string }
 variable "compartment_ocid" { type = string }
 variable "region" { type = string }
+variable "oci_config_file_profile" {
+  type        = string
+  default     = "DEFAULT"
+  description = "Named profile in ~/.oci/config used by the Terraform OCI provider."
+}
 variable "home_region" {
   type        = string
   default     = "us-ashburn-1"

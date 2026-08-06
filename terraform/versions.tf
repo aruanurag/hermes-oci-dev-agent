@@ -10,10 +10,12 @@ terraform {
 }
 
 provider "oci" {
-  region = var.region
+  region              = var.region
+  config_file_profile = var.oci_config_file_profile
 }
 
 provider "oci" {
-  alias  = "home"
-  region = var.home_region
+  alias               = "home"
+  region              = var.home_region
+  config_file_profile = var.oci_config_file_profile
 }

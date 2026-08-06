@@ -3,18 +3,20 @@
 set -euo pipefail
 
 terraform_dir="terraform"
+oci_profile="DEFAULT"
 ssh_private_key="$HOME/.ssh/id_rsa"
 local_ssh_port="2222"
 local_dashboard_port="9119"
 session_ttl="10800"
 
 usage() {
-  echo "Usage: $0 [--terraform-dir DIR] [--ssh-private-key PATH] [--local-ssh-port PORT] [--local-dashboard-port PORT] [--session-ttl SECONDS]" >&2
+  echo "Usage: $0 [--terraform-dir DIR] [--oci-profile PROFILE] [--ssh-private-key PATH] [--local-ssh-port PORT] [--local-dashboard-port PORT] [--session-ttl SECONDS]" >&2
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --terraform-dir) terraform_dir="$2"; shift 2 ;;
+    --oci-profile) oci_profile="$2"; shift 2 ;;
     --ssh-private-key) ssh_private_key="$2"; shift 2 ;;
     --local-ssh-port) local_ssh_port="$2"; shift 2 ;;
     --local-dashboard-port) local_dashboard_port="$2"; shift 2 ;;
@@ -62,7 +64,7 @@ cleanup() {
   fi
   if [[ -n "$session_id" ]]; then
     ssh -S "$control_socket" -O exit -p 22 "$session_id@host.bastion.$region.oci.oraclecloud.com" >/dev/null 2>&1 || true
-    oci bastion session delete --region "$region" --session-id "$session_id" --force --wait-for-state SUCCEEDED >/dev/null 2>&1 || true
+    oci --profile "$oci_profile" bastion session delete --region "$region" --session-id "$session_id" --force --wait-for-state SUCCEEDED >/dev/null 2>&1 || true
   fi
   rm -f "$session_file" "$control_socket" "$bastion_known_hosts" "$vm_known_hosts" "$bastion_ssh_log" "$dashboard_ssh_log"
   rmdir "$temporary_directory" 2>/dev/null || true
@@ -71,7 +73,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 session_id="$(
-  oci bastion session create-port-forwarding \
+  oci --profile "$oci_profile" bastion session create-port-forwarding \
     --region "$region" \
     --bastion-id "$bastion_id" \
     --target-resource-id "$instance_id" \
@@ -90,7 +92,7 @@ umask 077
 printf '%s\n' "$session_id" > "$session_file"
 
 for attempt in {1..30}; do
-  session_state="$(oci bastion session get --region "$region" --session-id "$session_id" --query 'data."lifecycle-state"' --raw-output)"
+  session_state="$(oci --profile "$oci_profile" bastion session get --region "$region" --session-id "$session_id" --query 'data."lifecycle-state"' --raw-output)"
   [[ "$session_state" == "ACTIVE" ]] && break
   [[ "$session_state" != "CREATING" ]] && { echo "Bastion session entered unexpected state: $session_state" >&2; exit 1; }
   sleep 2

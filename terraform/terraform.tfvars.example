@@ -3,6 +3,9 @@ tenancy_ocid         = "ocid1.tenancy.oc1..REPLACE"
 compartment_ocid     = "ocid1.compartment.oc1..REPLACE"
 region               = "us-chicago-1"
 home_region          = "us-ashburn-1"
+# Select this with Make's OCI_PROFILE argument rather than setting it here.
+# That keeps Terraform and OCI CLI Bastion commands on the same profile.
+# oci_config_file_profile = "HERMES"
 availability_domain  = "REPLACE_WITH_AD_NAME"
 compute_image_ocid   = "ocid1.image.oc1.us-chicago-1.REPLACE"
 ssh_public_key       = "ssh-ed25519 AAAA... your-mac"
