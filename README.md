@@ -72,6 +72,11 @@ The SSH private key must be the counterpart of `ssh_public_key` in
 `terraform.tfvars`. If the Dashboard port is already in use, select another local
 port as shown above and browse to that port instead.
 
+The initial Terraform example uses an RSA VM key. The tunnel script enables the
+legacy `ssh-rsa` signature algorithm only for the OCI Bastion hop because some
+Bastion endpoints still require it for RSA session keys. For a new deployment,
+prefer an ED25519 SSH key to avoid that compatibility setting.
+
 Cloud-init creates the dedicated non-root `hermes` user, runs the official installer,
 configures the OCI signing proxy, and starts the services. First boot can take several
 minutes. For maintenance, use `make dashboard`, then in another terminal run:

@@ -42,10 +42,13 @@ bastion_id="$(terraform -chdir="$terraform_dir" output -raw bastion_id)"
 instance_id="$(terraform -chdir="$terraform_dir" output -raw instance_id)"
 private_ip="$(terraform -chdir="$terraform_dir" output -raw private_ip)"
 session_file="$terraform_dir/.hermes-bastion-session"
-temporary_directory="$(mktemp -d "${TMPDIR:-/tmp}/hermes-dashboard.XXXXXX")"
+# Use a short, shared local path: macOS's per-user TMPDIR can exceed the
+# pathname limit for OpenSSH control sockets and break Bastion authentication.
+temporary_directory="$(mktemp -d /private/tmp/hermes-dashboard.XXXXXX)"
 control_socket="$temporary_directory/bastion-control"
 bastion_known_hosts="$temporary_directory/bastion-known-hosts"
 vm_known_hosts="$temporary_directory/vm-known-hosts"
+bastion_ssh_log="$temporary_directory/bastion-ssh.log"
 session_id=""
 
 cleanup() {
@@ -55,7 +58,7 @@ cleanup() {
     ssh -S "$control_socket" -O exit -p 22 "$session_id@host.bastion.$region.oci.oraclecloud.com" >/dev/null 2>&1 || true
     oci bastion session delete --region "$region" --session-id "$session_id" --force --wait-for-state SUCCEEDED >/dev/null 2>&1 || true
   fi
-  rm -f "$session_file" "$control_socket" "$bastion_known_hosts" "$vm_known_hosts"
+  rm -f "$session_file" "$control_socket" "$bastion_known_hosts" "$vm_known_hosts" "$bastion_ssh_log"
   rmdir "$temporary_directory" 2>/dev/null || true
   exit "$status"
 }
@@ -88,17 +91,29 @@ for attempt in {1..30}; do
 done
 [[ "${session_state:-}" == "ACTIVE" ]] || { echo "Timed out waiting for the Bastion session to become ACTIVE." >&2; exit 1; }
 
-ssh -i "$ssh_private_key" \
-  -o IdentitiesOnly=yes \
-  -o StrictHostKeyChecking=accept-new \
-  -o UserKnownHostsFile="$bastion_known_hosts" \
-  -o ExitOnForwardFailure=yes \
-  -o ControlMaster=yes \
-  -o ControlPath="$control_socket" \
-  -f -N \
-  -L "$local_ssh_port:$private_ip:22" \
-  -p 22 \
-  "$session_id@host.bastion.$region.oci.oraclecloud.com"
+bastion_connected=false
+for attempt in {1..30}; do
+  if ssh -i "$ssh_private_key" \
+    -o IdentitiesOnly=yes \
+    -o PubkeyAcceptedAlgorithms=+ssh-rsa \
+    -o StrictHostKeyChecking=accept-new \
+    -o UserKnownHostsFile="$bastion_known_hosts" \
+    -o ExitOnForwardFailure=yes \
+    -o ControlMaster=yes \
+    -o ControlPath="$control_socket" \
+    -f -N \
+    -L "$local_ssh_port:$private_ip:22" \
+    -p 22 \
+    "$session_id@host.bastion.$region.oci.oraclecloud.com" 2>"$bastion_ssh_log"; then
+    bastion_connected=true
+    break
+  fi
+  sleep 2
+done
+if [[ "$bastion_connected" != true ]]; then
+  cat "$bastion_ssh_log" >&2
+  exit 1
+fi
 
 echo "Dashboard tunnel ready: http://localhost:$local_dashboard_port"
 echo "Press Ctrl-C to close both SSH tunnels and revoke the Bastion session."
