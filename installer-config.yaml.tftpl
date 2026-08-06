@@ -3,7 +3,10 @@ model:
   base_url: "http://127.0.0.1:8181/v1"
   api_key: "not-used"
   default: "${genai_model_id}"
-  context_length: 131072
+  # Hermes derives its output allowance as roughly half this value. OCI accepts
+  # maxOutputTokens through 65535 (65536 is rejected), so keep the derived
+  # value one token below that boundary.
+  context_length: 131070
 
 terminal:
   backend: local
