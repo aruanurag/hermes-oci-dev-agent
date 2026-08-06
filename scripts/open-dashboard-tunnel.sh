@@ -68,6 +68,7 @@ session_id="$(
     --target-resource-id "$instance_id" \
     --target-private-ip "$private_ip" \
     --target-port 22 \
+    --key-type PUB \
     --ssh-public-key-file "${ssh_private_key}.pub" \
     --session-ttl "$session_ttl" \
     --wait-for-state SUCCEEDED \
@@ -78,6 +79,14 @@ session_id="$(
 [[ "$session_id" == ocid1.bastionsession.* ]] || { echo "OCI did not return a Bastion session OCID." >&2; exit 1; }
 umask 077
 printf '%s\n' "$session_id" > "$session_file"
+
+for attempt in {1..30}; do
+  session_state="$(oci bastion session get --region "$region" --session-id "$session_id" --query 'data."lifecycle-state"' --raw-output)"
+  [[ "$session_state" == "ACTIVE" ]] && break
+  [[ "$session_state" != "CREATING" ]] && { echo "Bastion session entered unexpected state: $session_state" >&2; exit 1; }
+  sleep 2
+done
+[[ "${session_state:-}" == "ACTIVE" ]] || { echo "Timed out waiting for the Bastion session to become ACTIVE." >&2; exit 1; }
 
 ssh -i "$ssh_private_key" \
   -o IdentitiesOnly=yes \
