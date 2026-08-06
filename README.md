@@ -38,96 +38,48 @@ The editable source is [docs/hermes-oci-architecture.excalidraw](docs/hermes-oci
 - An OCI compartment, region, availability domain, Oracle Linux image OCID, SSH public
   key, and OCI Generative AI project OCID.
 
-## Deploy
+## Quick start
+
+First, create your local deployment values. This file is intentionally ignored by
+Git and must never be committed.
 
 ```sh
-cd terraform
-cp terraform.tfvars.example terraform.tfvars
-# Fill every value marked REQUIRED, then:
-terraform init
-terraform plan
-terraform apply
+cp terraform/terraform.tfvars.example terraform/terraform.tfvars
+# Edit terraform/terraform.tfvars and fill every REQUIRED value.
 ```
+
+Then run either target from the repository root:
+
+```sh
+make provision  # Create/update the Terraform-managed OCI stack.
+make dashboard  # Open http://localhost:9119; Ctrl-C closes the tunnel and session.
+
+# Or perform both steps in one command:
+make up
+```
+
+`make dashboard` creates a three-hour Bastion port-forwarding session, opens both
+SSH hops, and revokes the session when you press Ctrl-C. It obtains the region,
+Bastion ID, instance ID, and private IP from Terraform outputs—nothing needs to be
+copied manually. The default SSH key is `~/.ssh/id_rsa`; override it when needed:
+
+```sh
+make dashboard SSH_PRIVATE_KEY="$HOME/.ssh/id_ed25519"
+make dashboard LOCAL_DASHBOARD_PORT=9919
+```
+
+The SSH private key must be the counterpart of `ssh_public_key` in
+`terraform.tfvars`. If the Dashboard port is already in use, select another local
+port as shown above and browse to that port instead.
 
 Cloud-init creates the dedicated non-root `hermes` user, runs the official installer,
-configures the OCI signing proxy, and starts the services. Check progress with the
-maintenance SSH session and
-`sudo journalctl -u cloud-final -f`.
-
-## Open the Dashboard from your Mac
-
-Run the following from your Mac after `terraform apply`. The private key must
-correspond to both the `ssh_public_key` in `terraform.tfvars` and the public key
-attached to the Bastion session.
+configures the OCI signing proxy, and starts the services. First boot can take several
+minutes. For maintenance, use `make dashboard`, then in another terminal run:
 
 ```sh
-cd terraform
-
-export OCI_REGION='us-chicago-1' # Set this to the region in terraform.tfvars.
-export SSH_PRIVATE_KEY="$HOME/.ssh/id_rsa"
-export SSH_PUBLIC_KEY="${SSH_PRIVATE_KEY}.pub"
-export BASTION_ID="$(terraform output -raw bastion_id)"
-export INSTANCE_ID="$(terraform output -raw instance_id)"
-export PRIVATE_IP="$(terraform output -raw private_ip)"
+ssh -i ~/.ssh/id_rsa -o IdentitiesOnly=yes -p 2222 opc@127.0.0.1 \
+  'sudo journalctl -u cloud-final -f'
 ```
-
-Create a three-hour port-forwarding session to the VM's private SSH port. The
-query deliberately extracts the **Bastion session** OCID from the completed work
-request; do not use the returned `bastionworkrequest` OCID as an SSH username.
-
-```sh
-export SESSION_ID="$(
-  oci bastion session create-port-forwarding \
-    --region "$OCI_REGION" \
-    --bastion-id "$BASTION_ID" \
-    --target-resource-id "$INSTANCE_ID" \
-    --target-private-ip "$PRIVATE_IP" \
-    --target-port 22 \
-    --ssh-public-key-file "$SSH_PUBLIC_KEY" \
-    --session-ttl 10800 \
-    --wait-for-state SUCCEEDED \
-    --query 'data.resources[0].identifier' \
-    --raw-output
-)"
-
-oci bastion session get --region "$OCI_REGION" --session-id "$SESSION_ID" \
-  --query 'data."lifecycle-state"' --raw-output
-```
-
-In **Terminal 1**, keep this first tunnel running. It forwards local port `2222`
-to the private VM's SSH server through Bastion:
-
-```sh
-ssh -i "$SSH_PRIVATE_KEY" -o IdentitiesOnly=yes -o ExitOnForwardFailure=yes -N \
-  -L 2222:"$PRIVATE_IP":22 \
-  -p 22 \
-  "$SESSION_ID@host.bastion.$OCI_REGION.oci.oraclecloud.com"
-```
-
-In **Terminal 2**, forward the loopback-only Dashboard through that private SSH
-connection. If the VM was recreated, clear the stale localhost host key first:
-
-```sh
-ssh-keygen -R '[127.0.0.1]:2222'
-
-ssh -i "$SSH_PRIVATE_KEY" -o IdentitiesOnly=yes -o ExitOnForwardFailure=yes -N \
-  -L 9119:127.0.0.1:9119 \
-  -p 2222 opc@127.0.0.1
-```
-
-Browse to <http://localhost:9119>. Closing either tunnel removes dashboard access;
-the services continue running on the VM.
-
-When finished, close both SSH commands and revoke the time-limited session:
-
-```sh
-oci bastion session delete --region "$OCI_REGION" --session-id "$SESSION_ID" \
-  --force --wait-for-state SUCCEEDED
-```
-
-If the second SSH command reports `Permission denied (publickey)`, verify that
-`$SSH_PRIVATE_KEY` is the private counterpart of the key configured in
-`ssh_public_key`; creating a new Bastion session does not add a new key to the VM.
 
 Use the Dashboard's **Chat** view for a live developer-agent conversation. The
 **Sessions** view is for reviewing saved sessions and their workspace activity.

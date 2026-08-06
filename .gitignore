@@ -6,6 +6,7 @@ terraform/terraform.tfvars
 terraform/*.tfvars.json
 terraform/crash.log
 terraform/crash.*.log
+terraform/.hermes-bastion-session
 
 # Credentials, environment files, and local SSH material
 .env
